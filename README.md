@@ -19,6 +19,10 @@ A decentralized Computer-Aided Dispatch (CAD) system built on Bitcoin SV (BSV) b
 
 ---
 
+> Function-level docs (every `IncidentManager`/`DispatchManager`/`ResourceManager` method, with mermaid
+> diagrams): [`docs/readme-functions.md`](docs/readme-functions.md). External integrations (incl. the
+> wallet's protocol-adapter contract): [`REFERENCES.md`](REFERENCES.md).
+
 ## Overview
 
 ### What is a CAD System?

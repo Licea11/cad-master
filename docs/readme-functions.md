@@ -6,6 +6,7 @@
 3. [Interoperabilidad de agencias](#interoperabilidad-de-agencias)
 4. [Workflows y permisos](#workflows-y-permisos)
 5. [Integración IoT](#integración-iot)
+6. [Funciones implementadas, no incluidas en el mapeo legacy](#funciones-implementadas-no-incluidas-en-el-mapeo-legacy)
 
 ---
 
@@ -666,6 +667,113 @@ sequenceDiagram
   ],
   "autoDispatch": true
 }
+```
+
+---
+
+## Funciones implementadas, no incluidas en el mapeo legacy
+
+Estas funciones ya existen en el código (`IncidentManager`, `DispatchManager`, `ResourceManager`) pero no
+tienen equivalente directo en el sistema legacy — son capacidades nuevas habilitadas por blockchain, o
+funciones de soporte que faltaban en las secciones 1-12. `reopenIncident` aparece en la tabla maestra
+(fila 4) pero nunca tuvo su propio diagrama — se documenta aquí por primera vez.
+
+### 13. Reopen Incident
+
+**`IncidentManager.reopenIncident(incidentId: string, supervisorPrivKey: PrivateKey): Promise<string>`**
+
+```mermaid
+sequenceDiagram
+    participant Sup as Supervisor
+    participant IM as IncidentManager
+    participant BSV as BSV Blockchain
+
+    Sup->>IM: reopenIncident(incidentId, supervisorPrivKey)
+    IM->>IM: getIncidentUtxo(incidentId)
+    alt status !== CLOSED
+        IM-->>Sup: throw Error('Incident not closed')
+    else status === CLOSED
+        IM->>IM: buildReopenIncidentTx(utxo, supervisorPrivKey)
+        IM->>BSV: broadcast(tx)
+        BSV-->>IM: txid
+        IM-->>Sup: txid
+    end
+```
+
+### 14. Add Field Notes
+
+**`IncidentManager.addFieldNotes(incidentId: string, notes: any, operatorPrivKey: PrivateKey): Promise<string>`**
+
+```mermaid
+sequenceDiagram
+    participant Op as Operator (campo)
+    participant IM as IncidentManager
+    participant BSV as BSV Blockchain
+
+    Op->>IM: addFieldNotes(incidentId, notes, operatorPrivKey)
+    IM->>IM: buildFieldNotesTx(incidentId, notes, operatorPrivKey)
+    Note over IM: TX nueva con notas en OP_RETURN,<br/>enlazada al incidente — no muta<br/>el estado del IncidentContract
+    IM->>BSV: broadcast(tx)
+    BSV-->>IM: txid
+    IM-->>Op: txid
+```
+
+### 15. Auto-Dispatch
+
+**`DispatchManager.autoDispatch(incidentId: string, resourceType: number): Promise<string>`**
+
+```mermaid
+sequenceDiagram
+    participant Sys as Sistema (auto)
+    participant DM as DispatchManager
+    participant RM as ResourceManager
+    participant IDX as SPV Indexer
+
+    Sys->>DM: autoDispatch(incidentId, resourceType)
+    DM->>IDX: getIncidentFromIndexer(incidentId)
+    IDX-->>DM: incident { location }
+    DM->>RM: findNearestAvailable(location, resourceType, 10000m)
+    RM-->>DM: { resourceId, distance }
+    DM->>DM: dispatch({ incidentId, resourceIds:[resourceId],<br/>dispatcherPrivKey: autoDispatchKey })
+    DM-->>Sys: txid
+```
+
+> Usa una clave de auto-dispatch dedicada (`getAutoDispatchKey()`) — en producción debe ser una clave
+> de sistema separada de cualquier operador humano, auditable por separado.
+
+### 16. Cancel Dispatch
+
+**`DispatchManager.cancelDispatch(dispatchId: string, dispatcherPrivKey: PrivateKey): Promise<string>`**
+
+```mermaid
+sequenceDiagram
+    participant D as Dispatcher
+    participant DM as DispatchManager
+    participant BSV as BSV Blockchain
+
+    D->>DM: cancelDispatch(dispatchId, dispatcherPrivKey)
+    DM->>DM: buildCancelDispatchTx(dispatchId, dispatcherPrivKey)
+    DM->>BSV: broadcast(tx)
+    BSV-->>DM: txid
+    DM-->>D: txid
+```
+
+### 17. Resource: Update Status / Batch GPS / Find Nearest / Release
+
+Cuatro funciones de soporte en `ResourceManager`, agrupadas porque comparten la misma forma
+(fetch resource → build tx → broadcast) salvo `findNearestAvailable`, que es de solo lectura:
+
+```mermaid
+classDiagram
+    class ResourceManager {
+        +getResource(resourceId) Promise~ResourceData~
+        +updateStatus(resourceId, newStatus, operatorPrivKey) Promise~string~
+        +updateLocation(resourceId, location, operatorPrivKey) Promise~string~
+        +batchUpdateLocations(updates, operatorPrivKey) Promise~string~
+        +findNearestAvailable(location, resourceType, maxDistance?) Promise~ResourceData~
+        +release(resourceId, operatorPrivKey) Promise~string~
+    }
+    note for ResourceManager "updateStatus() throws si la transición no es válida\n(validateStatusTransition, ver tabla de estados en §7).\nfindNearestAvailable() es la única lectura pura — no\nbroadcastea, consulta el indexer SPV (POST /resources/nearest).\nbatchUpdateLocations() construye una sola TX para N recursos\n(misma intención atómica que dispatch())."
 ```
 
 ---
